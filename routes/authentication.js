@@ -1,6 +1,19 @@
 const { Router } = require('express');
 const router = new Router();
 
+const dotenv = require('dotenv');
+dotenv.config();
+
+const nodemailer = require('nodemailer');
+
+const transport = nodemailer.createTransport({
+  service: 'Gmail',
+  auth: {
+    user: process.env.NODEMAILER_EMAIL,
+    pass: process.env.NODEMAILER_PASSWORD
+  }
+});
+let user;
 const User = require('./../models/user');
 const bcryptjs = require('bcryptjs');
 
@@ -20,12 +33,30 @@ router.post('/sign-up', (req, res, next) => {
       return User.create({
         name,
         email,
-        passwordHash: hash
+        passwordHash: hash,
+        confirmationToken: (Math.random() * 10000 * Math.random()).toString()
       });
     })
-    .then(user => {
-      req.session.user = user._id;
+    .then(document => {
+      req.session.user = document._id;
+      user = document;
+
       res.redirect('/');
+    })
+    .then(() => {
+      transport.sendMail({
+        from: process.env.NODEMAILER_EMAIL,
+        to: process.env.NODEMAILER_EMAIL,
+        subject: 'Please verify your email to activate your account',
+        html: `
+        <html>
+          <body>
+            <h1>Hi ${user.name}</h1>
+            <a href="http://localhost:3000/authentication/confirm-email?token=${user.confirmationToken}">Click here to verify your account: http://localhost:3000/authentication/confirm-email?token=${user.confirmationToken}</a>
+          </body>
+        </html>
+        `
+      });
     })
     .catch(error => {
       next(error);
@@ -67,6 +98,35 @@ router.post('/sign-out', (req, res, next) => {
 });
 
 const routeGuard = require('./../middleware/route-guard');
+const { findOne } = require('./../models/user');
+
+router.get('/authentication/confirm-email', routeGuard, (req, res, next) => {
+  const token = req.query.token;
+  console.log(token);
+
+  User.findOneAndUpdate({ confirmationToken: token }, { status: 'active' })
+    .then(user => {
+      console.log(user.status);
+    })
+    .then(res.redirect('/profile'))
+    .catch(err => {
+      next(err);
+    });
+});
+
+router.get('/profile', routeGuard, (req, res, next) => {
+  const userId = req.session.user;
+
+  let user;
+  User.findById(userId)
+    .then(data => {
+      console.log(data);
+      user = data;
+    })
+    .then(() => {
+      res.render('profile', { user: user });
+    });
+});
 
 router.get('/private', routeGuard, (req, res, next) => {
   res.render('private');
